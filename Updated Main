@@ -1,0 +1,160 @@
+// Imports for Bukkit and Java API
+import org.bukkit.command.Command;
+import org.bukkit.command.CommandSender;
+import org.bukkit.plugin.java.JavaPlugin;
+
+// Imports for Java Database Connectivity API
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.SQLException;
+
+// Imports for JDA (Java Discord API)
+import net.dv8tion.jda.api.JDABuilder;
+import net.dv8tion.jda.api.entities.TextChannel;
+import net.dv8tion.jda.api.events.message.MessageReceivedEvent;
+import net.dv8tion.jda.api.hooks.ListenerAdapter;
+
+// Import for Discord login exception
+import javax.security.auth.login.LoginException;
+
+// Main plugin class
+public class TicketPlugin extends JavaPlugin {
+
+    // MySQL database connection goes in here
+    private Connection connection;
+    private String mysqlHost = "SQL Host"; // which host are we using?
+    private String mysqlDatabase = "Database Name";
+    private String mysqlUsername = "SQL name"; // do we need a login that everyone can use?
+    private String mysqlPassword = "SQL password";
+
+    // Discord bot connection - Are we still not using a Discord Bot? Will have to check with Advisor/Sponsor
+    private String discordToken = "Discord Bot Token";
+    private String channelId = "Discord Channel Name";
+
+    // Plugin initialization happens here
+    @Override
+    public void onEnable() {
+        connectToDatabase();
+        connectToDiscord();
+    }
+
+    // Plugin cleanup
+    @Override
+    public void onDisable() {
+        try {
+            // Close the database connection if it's open in this section
+            if (connection != null && !connection.isClosed()) {
+                connection.close();
+            }
+        } catch (SQLException e) {
+            // Exception Handling that catches error and prints it out to analyze
+            e.printStackTrace();
+        }
+    }
+
+    // Method to connect to MySQL database
+    private void connectToDatabase() {
+        try {
+            // Attempt to establish a connection to the MySQL database
+            connection = DriverManager.getConnection("jdbc:mysql://" + mysqlHost + "/" + mysqlDatabase, mysqlUsername, mysqlPassword);
+
+            // Log a success message if the connection is successful
+            getLogger().info("Connected to MySQL database successfully.");
+        } catch (SQLException e) {
+            // Log an error message if an SQLException occurs during connection
+            getLogger().severe("Failed to connect to MySQL database: " + e.getMessage());
+
+            // Disable the plugin if connection fails to prevent further errors
+            getServer().getPluginManager().disablePlugin(this);
+        }
+    }
+
+    // Method to connect to the KSU Discord server
+    private void connectToDiscord() {
+        try {
+            JDABuilder.createDefault(discordToken)
+                    .addEventListeners(new DiscordEventListener())
+                    .build();
+            getLogger().info("Connected to Discord successfully.");
+        } catch (LoginException e) {
+            getLogger().severe("Failed to login to Discord: " + e.getMessage());
+            getServer().getPluginManager().disablePlugin(this);
+        }
+    }
+
+    // Event listener for Discord events
+    private class DiscordEventListener extends ListenerAdapter {
+
+        @Override
+        public void onMessageReceived(MessageReceivedEvent event) {
+            // Get the text channel and message content from the received event
+            TextChannel channel = event.getTextChannel();
+            String message = event.getMessage().getContentDisplay();
+
+            // Check if the message starts with "!ticket"
+            if (message.startsWith("!ticket")) {
+                // Extract player name and ticket message from the message content
+                String playerName = event.getAuthor().getName();
+                String ticketMessage = message.substring(8).trim();
+
+                // Call the sendTicketAlert method to process the ticket
+                sendTicketAlert(playerName, ticketMessage);
+            }
+        }
+
+        // Method to process the received ticket and send alerts
+        private void sendTicketAlert(String playerName, String ticketMessage) {
+            // Log a message indicating that a ticket has been received
+            getLogger().info("Ticket received from " + playerName + ": " + ticketMessage);
+
+            // Save the ticket to the database
+            saveTicketToDatabase(playerName, ticketMessage);
+
+            // Send a notification to the Discord channel
+            sendToDiscord(playerName, ticketMessage);
+        }
+    }
+
+
+    // Method to save ticket to MySQL database
+        private void saveTicketToDatabase(String playerName, String ticketMessage) {
+            try {
+                PreparedStatement statement = connection.prepareStatement("INSERT INTO tickets (player_name, message) VALUES (?, ?)");
+                statement.setString(1, playerName);
+                statement.setString(2, ticketMessage);
+                statement.executeUpdate();
+                getLogger().info("Ticket saved to database successfully.");
+            } catch (SQLException e) {
+                getLogger().severe("Failed to save ticket to database: " + e.getMessage());
+            }
+        }
+
+        // method to send ticket alert to Discord channel
+        private void sendToDiscord(String playerName, String ticketMessage) {
+            TextChannel discordChannel = event.getJDA().getTextChannelById(channelId);
+            if (discordChannel != null) {
+                discordChannel.sendMessage("[Ticket Alert] " + playerName + " submitted a ticket: " + ticketMessage).queue();
+                getLogger().info("Ticket sent to Discord successfully.");
+            } else {
+                getLogger().severe("Failed to send ticket to Discord: Discord channel not found.");
+            }
+        }
+    }
+
+    // Command handler for in-game ticket creation
+    @Override
+    public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+        if (command.getName().equalsIgnoreCase("ticket")) {
+            if (args.length < 1) {
+                sender.sendMessage("Usage: /ticket <message>");
+                return false;
+            }
+            String playerName = sender.getName();
+            String ticketMessage = String.join(" ", args);
+            sendTicketAlert(playerName, ticketMessage);
+            return true;
+        }
+        return false;
+    }
+}
